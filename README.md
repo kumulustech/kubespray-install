@@ -44,7 +44,8 @@ we'll also want to add:
 
 ```
 kubeconfig_localhost: true
-```` to the all group_vars
+```
+to the all group_vars
 
 Now we should be able to deploy our Kubernetes environment:
 
