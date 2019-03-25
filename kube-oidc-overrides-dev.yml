@@ -72,6 +72,31 @@ loginapp:
       - secretName: loginapp-example-tls
         hosts:
           - loginapp.kumulus.co
+          
+  # Loginapp configuration
+  # see: https://github.com/fydrah/loginapp#configuration
+  config:
+    name: "Login Application"
+    listen: "0.0.0.0:5555"
+    oidc:
+      client:
+        id: "loginapp"
+        secret: ZXhhbXBsZS1hcHAtc2VjcmV0
+        redirect_url: "https://loginapp.kumulus.co/callback"
+      issuer:
+        root_ca: "/etc/ssl/ca.pem"
+        url: "https://dex.kumulus.co/dex"
+    # Tls support
+    tls:
+      # Enable tls termination
+      # default: false
+      enabled: true
+      # Certificate location
+      # default: mandatory if tls.enabled is true
+      cert: /etc/ssl/cert.pem
+      # Key location
+      # default: mandatory if tls.enabled is true
+      key: /etc/ssl/key.pem
 
 # Issuer certificate authority
   issuerCA:  |
