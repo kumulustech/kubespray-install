@@ -1,84 +1,280 @@
-## Step 1. Deploy Kubernetes
-(source: https://github.com/kubernetes-sigs/kubespray)
-Prequisites:
-Virtual or Physical machines with direct "open" L3 access.  I.e. there should be no firewall access restrictions between nodes, and at a minimum ports 80, 443, and preferably ports from 30-65K are available at a minimum.
-A "launch" node, or a laptop with:
-git
-python (3) + ansible (2.7)
-kubectl (1.12)
+**(Optional) Set up HAProxy SLB for testing**
+---------------------------------------------
+
+Download the haproxy playbook\
+`wget https://raw.githubusercontent.com/kumulustech/kubespray-install/master/haproxy.tar.gz`
+
+Unzip it:
+
+`tar -xzvf haproxy.tar.gz`
+
+Update the inventory file with your haproxy test server IP (note: this
+setup is for testing and does not configure VIP or HA on haproxy).
+
+Then update the haproxy.cfg file to reflect the IP of your SLB hardware
+in the ‘frontend kubernetes’ configuration after ‘bind’ as well as
+updating the ‘server’ entries of kubernetes-master-nodes to reflect your
+pods hostnames and IPs
+
+Once the configs have been modified to reflect your environment, run the
+playbook to bring up the haproxy server:
+
+`ansible-playbook -i inventory haproxy.yml`
+
+**Step 1. Prepare Kubespray**
+-----------------------------
+
+(source:
+[*https://github.com/kubernetes-sigs/kubespray*](https://github.com/kubernetes-sigs/kubespray))
+Prequisites: Virtual or Physical machines with direct "open" L3 access.
+I.e. there should be no firewall access restrictions between nodes, and
+at a minimum ports 80, 443, and preferably ports from 30-65K are
+available at a minimum. A "launch" node, or a laptop with: git python
+(3) + ansible (2.7) kubectl (1.12)
 
 Git clone the kubespray repository:
-```
-git clone https://github.com/kubespray/kubespray
-```
+
+`git clone https://github.com/kubespray/kubespray`
 
 Create an inventory directory for the ansible play:
+
+`cp -r kubespray/inventory/sample project/`
+
+update the project/hosts.ini file with the the target machine
+information.
+
+`hostname ansible\_host={publicL3} ansible\_user={osUser}`
+
+publicL3 is the address that ansible will access the host with osUser is
+the default user for the OS, often ubuntu for Ubuntu nodes, centos for
+Centos nodes, cloud-user for Rhel
+
+Copy the hostname into the appropriate group based on role, and the
+normal model is to separate master, etcd and nodes. But it is also
+common to run etcd on the master node(s), and also to run all resources
+on the all nodes depending on scale.
+
+Note: the total number of etcd nodes must be an odd number or the
+kubespray playbook will fail
+
+Unless one has already checked remote ssh login access to the nodes,
+you'll often want to bypass the ssh-host key validation:
+
+`export ANSIBLE\_HOST\_KEY\_CHECKING=False`
+
+Or, add the following to the project/group\_vars/all/all.yml
+
+`ansible\_ssh\_extra\_args: '-o StrictHostKeyChecking=no'`
+
+In order to allow the local host to communicate with the deployed
+kubernetes environment we'll also want to add:
+
+`kubeconfig\_localhost: true`
+
+to the all group\_vars. You will need to configure your external load
+balancer in this file as well if applicable. source:
+[*https://github.com/kubernetes-sigs/kubespray/blob/master/docs/ha-mode.md*](https://github.com/kubernetes-sigs/kubespray/blob/master/docs/ha-mode.md)
+
 ```
-cp -r kubespray/inventory/sample project/
+## External LB example config
+## apiserver_loadbalancer_domain_name: "elb.some.domain"
+#loadbalancer_apiserver:
+# address: 1.2.3.4
+# port: 1234
+
+## Internal loadbalancers for apiservers (this defaults to false when loadbalancer_apiserver is set)
+#loadbalancer_apiserver_localhost: true
 ```
 
-update the project/hosts.ini file with the the target machine information.
+If kubespray is generating your api-server certificates (via kubeadm),
+you will also need to add the address of your SLB/ELB to the
+supplementary\_addresses\_in\_ssl\_keys array in
+project/group\_vars/k8s-cluster/k8s-cluster.yml
 
-hostname ansible_host={publicL3} ansible_user={osUser}
+If no external load balancer is specified (as is the default), a
+localhost load balancer will be set up instead.
 
-publicL3 is the address that ansible will access the host with
-osUser is the default user for the OS, often ubuntu for Ubuntu nodes, centos for Centos nodes, cloud-user for Rhel
+**Step 2. Enable Helm**
+-----------------------
 
-Copy the hostname into the appropriate group based on role, and the normal model is to
-separate master, etcd and nodes. But it is also common to run etcd on the master node(s), and also
-to run all resources on the all nodes depending on scale.
+Source:
+[*https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/helm*](https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/helm)
 
-Unless one has already checked remote ssh login access to the nodes, you'll often want to bypass the ssh-host key validation:
-
-```
-export ANSIBLE_HOST_KEY_CHECKING=False
-```
-Or, add the following to the project/group_vars/all/all.yml
-
-```
-ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
-```
-
-In order to allow the local host to communicate with the deployed kubernetes enviornment
-we'll also want to add:
+In project/group\_vars/k8s-cluster/addons.yml set helm\_enabled to true
+and add the line helm\_version like such:
 
 ```
-kubeconfig_localhost: true
+# Helm deployment
+helm_enabled: true
+helm_version: v2.13.0 # note, without this line, helm defaults to v2.12.2
 ```
-to the all group_vars
+
+Alternatively, you can install Helm natively. First get the helm client,
+the simplest method is to run the following curl/bash:
+
+`curl https://raw.githubusercontent.com/helm/helm/master/scripts/get |
+bash`
+
+Create a service account and then bind the cluster-admin role to the
+service account:
+```
+kubectl create serviceaccount tiller --namespace kube-system
+Kubectl create clusterrolebinding tiller-deploy --clusterrole cluster-admin --serviceaccount kube-system:tiller
+```
+And finally install tiller:
+
+`helm init --service-account tiller`
+
+**Step 3. Enable Ingress Controller Deployment**
+------------------------------------------------
+
+Nginx docs: [*https://github.com/kubernetes/ingress-nginx/blob/master/docs/deploy/baremetal.md*](https://github.com/kubernetes/ingress-nginx/blob/master/docs/deploy/baremetal.md)
+
+Kubespray addon repo (its readme.md is an outdated copy of ingress-nginx install docs that has no relation to enabling the addon even though the repo is for the add-on code): [*https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/ingress\_controller/ingress\_nginx*](https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/ingress_controller/ingress_nginx)
+
+Install within kubespray playbooks:
+
+In project/group\_vars/k8s-cluster/addons.yml set
+ingress\_nginx\_enabled to true and uncomment the lines following it
+like such. Add the line ‘ingress\_nginx\_default\_service\_nodeport:
+true’ to the block as well, this is a custom setting.
+
+```
+# Nginx ingress controller deployment
+ingress_nginx_enabled: true
+ingress_nginx_host_network: false
+ingress_nginx_nodeselector:
+node-role.kubernetes.io/node: ""
+# ingress_nginx_tolerations:
+# - key: "node-role.kubernetes.io/master"
+# operator: "Equal"
+# value: ""
+# effect: "NoSchedule"
+# ingress_nginx_namespace: "ingress-nginx"
+# ingress_nginx_insecure_port: 80
+# ingress_nginx_secure_port: 443
+# ingress_nginx_configmap:
+# map-hash-bucket-size: "128"
+# ssl-protocols: "SSLv2"
+# ingress_nginx_configmap_tcp_services:
+# 9000: "default/example-go:8080"
+# ingress_nginx_configmap_udp_services:
+# 53: "kube-system/kube-dns:53"
+ingress_nginx_default_service_nodeport: true
+```
+
+To enable the nodePort custom setting, we must alter the ingress service
+template within our kubespray directory to reflect the following:
+
+```
+## kubespray/roles/kubernetes-apps/ingress-controller/ingress-nginx/templates/svc-default-backend.yml.j2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: default-backend
+  namespace: {{ ingress_nginx_namespace }}
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+{% if ingress_nginx_default_service_nodeport %}
+  type: NodePort
+{% endif %}
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+```
+
+Note:
+
+-   Jinja if statement added for the ingress\_nginx\_default\_service\_nodeport setting
+
+-   targetPort changed from 8080 to 80
+
+-   Selector app.kubernetes.io/name changed from ‘default-backend’ to ‘ingress-nginx’
+
+Also add the following line to
+kubespray/roles/kubernetes-apps/ingress-controller/ingress-nginx/defaults/main.yml:
+
+`ingress_nginx_default_service_nodeport: false`
+
+After these updates, you can rerun the ansible cluster.yml playbook to
+update you cluster (TODO: test if scale.yml works too)
+
+**Step 4. Configure OpenID connect on cluster for dex/ldap**
+------------------------------------------------------------
+
+In project/group\_vars/k8s-cluster/k8s-cluster.yml, uncomment the line
+\#kube\_oidc\_auth: false and set it to true then uncomment configure
+the following
+
+Note:
+-   If using NodePort ingress, the issuer url for oidc tokens must include the port number
+-   The API server configured with OpenID Connect flags doesn't require dex to be available upfront. Other authenticators, such as client certs, can still be used.)
+-   The CA file which was used to sign the SSL certificates for Dex needs to be copied to a location where the API server can locate it with the --oidc-ca-file flag
+    -   The following config looks for the CA file in /etc/kubernetes/pki/ca.pem but this can be modified to suit your needs so long as the CA exists at the new setting
+    -   If you don’t have a CA available for testing, see the gencert.sh script here, modify it to reflect your DNS setup, then execute it and install the resulting ca.pem on the master node at /etc/kubernetes/pki/ca.pem:
+        -   [*https://github.com/krishnapmv/k8s-ldap*](https://github.com/krishnapmv/k8s-ldap)
+    -   NOTE: If the CA file is not found in the location specified on the master host, the kube-apiserver will fail to start
+
+```
+## Variables for OpenID Connect Configuration https://kubernetes.io/docs/admin/authentication/
+## To use OpenID you have to deploy additional an OpenID Provider (e.g Dex, Keycloak, ...)
+
+kube_oidc_url: https://dex.k8s.example.com:32000
+kube_oidc_client_id: loginapp
+## Optional settings for OIDC
+kube_oidc_ca_file: "{{ kube_cert_dir }}/ca.pem"
+kube_oidc_username_claim: name
+# kube_oidc_username_prefix: oidc:
+kube_oidc_groups_claim: groups
+# kube_oidc_groups_prefix: oidc:
+```
+
+**Step 5. Deploy Kubernetes**
+-----------------------------
 
 Now we should be able to deploy our Kubernetes environment:
 
-```
-ansible-playbook -i dev/hosts.ini kubespray/cluster.yml
-```
+`ansible-playbook -i dev/hosts.ini kubespray/cluster.yml`
 
 Once the deployment completes, install and configure kubectl with:
-(source: https://kubernetes.io/docs/tasks/tools/install-kubectl/)
+(source:
+[*https://kubernetes.io/docs/tasks/tools/install-kubectl/*](https://kubernetes.io/docs/tasks/tools/install-kubectl/))
 
 ```
-curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+curl -LO
+https://storage.googleapis.com/kubernetes-release/release/\$(curl -s
+https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+
 mv kubectl /usr/local/bin/kubectl
+
 chmod +x /usr/local/bin/kubectl
 
-export KUBECONFIG=${PWD}/dev/artifacts/admin.conf
+export KUBECONFIG=\${PWD}/dev/artifacts/admin.conf
 ```
+Run `kubectl get pods -n kube-system` to verify cluster related pods are
+all ready. In some cases, certain pods will be stuck in a status of
+ContainerCreating. Such cases can be rectified by running the playbook
+again.
 
-## Step 2.  Add helm
-(source: https://helm.sh/docs/using_helm/)
+`ansible-playbook -i dev/hosts.ini kubespray/cluster.yml`
 
-```
-kubectl create serviceaccount tiller -n kube-system
+**Step 6. Add NFS for PV backend**
+----------------------------------
 
-kubectl create clusterrolebinding --clusterrole=cluster-admin --serviceaccount=kube-system:tiller tiller-deploy
+(source:
+[*https://github.com/kubernetes-incubator/external-storage/tree/master/nfs-client*](https://github.com/kubernetes-incubator/external-storage/tree/master/nfs-client))
 
-helm init --service-account=tiller
-```
+`helm install stable/nfs-client-provisioner --name nfs --set nfs.server={SERVER\_IP} --set nfs.path={NFS\_EXPORT\_PATH}`
 
-## Step 3. Add NFS for PV backend
-(source: https://github.com/kubernetes-incubator/external-storage/tree/master/nfs-client)
-
-helm install stable/nfs-client-provisioner --name nfs --set nfs.server={SERVER_IP} --set nfs.path={NFS_EXPORT_PATH}
+On any node where a PVC/PV may be created, you will need to ensure that
+the nfs-common (Debian/Ubuntu) or nfs-utils (Rhel/Centos) packages are
+installed.
 
 Test your claim by creating a claim-test.yml document:
 
@@ -118,12 +314,290 @@ spec:
     - name: nfs-pvc
       persistentVolumeClaim:
         claimName: test-claim
+
 ```
 
 Then apply the document:
 
-kubectl apply -f test-claim.yml
+`kubectl apply -f test-claim.yml`
 
 This will create a SUCCESS file in the PVC-named directory
 
-## Step 4.
+**Step 7. Add Prometheus and resource alerts**
+----------------------------------------------
+
+Create the file prom-values.yaml and populate it with the following:
+
+```
+additionalPrometheusRules:
+  - name: cpu-alerts.rules
+    groups:
+      - name: Resource Alerts
+        rules:
+        - alert: HighCpuUsage
+          expr: 100 * (1 - avg by(instance)(irate(node_cpu{mode='idle'}[5m]))) > 85
+        - alert: HighMemUsage
+          expr: (sum(node_memory_MemTotal) - sum(node_memory_MemFree + node_memory_Buffers + node_memory_Cached) ) / sum(node_memory_MemTotal) * 100 > 85
+```
+
+Then pass it into the helm chart during install:
+
+`$ helm install -f prom-values.yaml stable/prometheus-operator`
+
+Note: default admin password is “prom-operator” instead of the grafana
+default of “admin”
+
+**(Optional) Install OpenLDAP helm chart for testing Dex LDAP integration**
+---------------------------------------------------------------------------
+
+Download the values yml file for the openldap helm chart from the
+kubespray-install repo
+
+`wget https://raw.githubusercontent.com/kumulustech/kubespray-install/master/openldap-helm-vals.yml`
+
+Run the following to install the OpenLDAP helm chart with said values
+(NOTE: --name is important since it is referenced in later configs):
+
+`$ helm install --name dex-test -f openldap-helm-vals.yml stable/openldap`
+
+The customised values passed to openldap seeds the directory with a
+couple of test users and groups as well as setting admin password to
+match k8s-ldap configs in the next section
+
+**Step 8. Install LDAP Authentication Server (Dex)**
+----------------------------------------------------
+
+(source:
+[*https://github.com/krishnapmv/k8s-ldap*](https://github.com/krishnapmv/k8s-ldap))
+
+For this example setup, the following is assumed (note: if SLB and Cert
+manager are available, the kube-oidc helm chart may be better suited for
+this task):
+
+-   An LDAP server is available at ldap.k8s.example.com:389 (if using openldap, then it would be dex-test-openldap.default.svc.cluster.local:389).
+-   Certificates are generated manually (example uses self signed)
+    -   We already installed the CA on the master node in a previous step as it must be present prior to running kubespray or the kube-apiserver will fail to deploy
+-   The following DNS entries exist independent of other applications and point to the public IP address of at least one cluster node:
+    -   dex.k8s.example.com --&gt; Dex OIDC provider
+    -   login.k8s.example.com --&gt; Custom Login Application
+
+Git clone the k8s-ldap repository
+
+`git clone https://github.com/krishnapmv/k8s-ldap`
+
+Modify k8s-ldap/ca-cm.yml config map to contain your CA.
+
+Modify k8s-ldap/dex-cm.yml and update issuer so that it contains the
+port number like such:
+
+`https://dex.k8s.example.org:32000/dex`
+
+Also within k8s-ldap/dex-cm.yml are the settings to configure dex’s
+connection to your ldap instance located under the key “connectors”.
+Configure the connectors section to suit your environment if necessary.
+If you’re using the OpenLDAP chart referenced previously, you will need
+to modify it to reflect the following:
+
+```
+      connectors:
+      - type: ldap
+        # Required field for connector id.
+        id: ldap
+        # Required field for connector name.
+        name: LDAP
+        config:
+          # Host and optional port of the LDAP server in the form "host:port".
+          # If the port is not supplied, it will be guessed based on "insecureNoSSL",
+          # and "startTLS" flags. 389 for insecure or StartTLS connections, 636
+          # otherwise.
+          host: dex-test-openldap.default.svc.cluster.local:389
+
+          # Following field is required if the LDAP host is not using TLS (port 389).
+          # Because this option inherently leaks passwords to anyone on the same network
+          # as dex, THIS OPTION MAY BE REMOVED WITHOUT WARNING IN A FUTURE RELEASE.
+          #
+          insecureNoSSL: true
+          # If a custom certificate isn't provide, this option can be used to turn on
+          # TLS certificate checks. As noted, it is insecure and shouldn't be used outside
+          # of explorative phases.
+          #
+          insecureSkipVerify: true
+          # When connecting to the server, connect using the ldap:// protocol then issue
+          # a StartTLS command. If unspecified, connections will use the ldaps:// protocol
+          #
+          # startTLS: true
+          # Path to a trusted root certificate file. Default: use the host's root CA.
+          #rootCA: /etc/dex/ldap.ca
+          # A raw certificate file can also be provided inline.
+          #rootCAData:
+          # The DN and password for an application service account. The connector uses
+          # these credentials to search for users and groups. Not required if the LDAP
+          # server provides access for anonymous auth.
+          # Please note that if the bind password contains a `$`, it has to be saved in an
+          # environment variable which should be given as the value to `bindPW`.
+          bindDN: cn=admin,dc=example,dc=org
+          bindPW: admin
+
+          # User search maps a username and password entered by a user to a LDAP entry.
+          userSearch:
+            # BaseDN to start the search from. It will translate to the query
+            # "(&(objectClass=person)(uid=<username>))".
+            baseDN: ou=People,dc=example,dc=org
+            # Optional filter to apply when searching the directory.
+            filter: "(objectClass=person)"
+            # username attribute used for comparing user entries. This will be translated
+            # and combine with the other filter as "(<attr>=<username>)".
+            username: mail
+            # The following three fields are direct mappings of attributes on the user entry.
+            # String representation of the user.
+            idAttr: DN
+            # Required. Attribute to map to Email.
+            emailAttr: mail
+            # Maps to display name of users. No default value.
+            nameAttr: cn
+
+          # Group search queries for groups given a user entry.
+          groupSearch:
+            # BaseDN to start the search from. It will translate to the query
+            # "(&(objectClass=group)(member=<user uid>))".
+            baseDN: ou=Groups,dc=example,dc=org
+            # Optional filter to apply when searching the directory.
+            filter: "(objectClass=groupOfNames)"
+            # Following two fields are used to match a user to a group. It adds an additional
+            # requirement to the filter that an attribute in the group must match the user's
+            # attribute value.
+            userAttr: DN
+            groupAttr: member
+            # Represents group name.
+            nameAttr: cn
+```
+
+Create the auth namespace
+
+`kubectl create ns auth`
+
+Create secrets to contain certs for dex and the loginapp
+```
+kubectl create secret tls login.k8s.example.org.tls --cert=\[cert.pem location here\] --key=\[key.pem location here\] -n auth
+kubectl create secret tls dex.k8s.example.org.tls --cert=\[cert.pem location here\] --key=\[key.pem location here\] -n auth
+```
+
+Create loginapp resources
+```
+# CA configmap containing your CA
+kubectl create -f ca-cm.yml
+# Login App configuration
+kubectl create -f loginapp-cm.yml
+# Login App NodePort (32002) service
+kubectl create -f loginapp-ing-svc.yml
+# Login App Deployment
+kubectl create -f loginapp-deploy.yml
+```
+
+Create dex’s custom resource definitions:
+```
+Create dex resources
+# Dex configuration
+kubectl create -f dex-cm.yml
+# Dex NodePort (32000) service
+kubectl create -f dex-ing-svc.yml
+# Dex deployment
+kubectl create -f dex-deploy.yml
+```
+
+If all went well, you should see two pods running in the auth namespace
+for dex and loginapp by running the following:
+
+`kubectl get pods -n auth`
+
+In many cases, the loginapp will be in a CrashLoopBackoff state due to
+being unable to connect to the non-existent dex resources. If you find
+that is the case, scale the loginapp deployment to 0 replicas then back
+to 1 to create a new pod for it:
+```
+kubectl scale deployments loginapp -n auth --replicas=0
+kubectl scale deployments loginapp -n auth --replicas=1
+```
+You should now be able to connect to
+[*https://login.k8s.example.com:32002*](https://login.k8s.example.com:32002)
+and see a webpage with a “Request Token” button. Click the button and
+enter the ldap credentials for the desired user (with openldap it will
+be janedoe@example.com / foo )
+
+After logging in, you will be given a block of text representing a
+kubeconfig user including the newly generated id token used to
+authenticate against the kubernetes api.
+
+You can test this user with the following:
+-   Copy a working admin.conf file for the cluster to your local host’s .kube/config
+-   Add the block of user text from the loginapp to the end of the config file’s ‘users’ block
+-   Modify the ‘context’ block for the cluster to reference the new user instead of kubernetes-admin. Eg.
+```
+contexts:
+- context:
+    cluster: kubernetes
+    user: jane
+  name: janedoe@example.org
+```
+
+Once done, you can run kubectl commands against the cluster from your
+localhost with the identity of Jane. However, that identity has no
+permissions currently. You can grant cluster-admin to the ldap group
+‘admins’ by running the following:
+
+`kubectl create -f rbac.yml`
+
+Considerations in using LDAP with Dex:
+1.  The **id\_token** can’t be revoked, it’s like a certificate so it should be short-lived (only a few minutes) so it can be very annoying to have to get a new token every few minutes.
+    a.  Use short lifetimes, ensure refresh token is properly configured
+2.  Security considerations
+    a.  Dex attempts to bind with the backing LDAP server using the end user's plain text password. Though some LDAP implementations allow passing hashed passwords, dex doesn't support hashing and instead strongly recommends that all administrators just use TLS. This can often be achieved by using port 636 instead of 389, and administrators that choose 389 are actively leaking passwords. Dex currently allows insecure connections because the project is still verifying that dex works with the wide variety of LDAP implementations. However, dex may remove this transport option, and users who configure LDAP login using 389 are not covered by any compatibility guarantees with future releases.
+
+**Step 9. Deploy Elastic and configure K8s to direct logs**
+-----------------------------------------------------------
+
+(source:
+[*https://github.com/komljen/helm-charts/tree/master/efk*](https://github.com/komljen/helm-charts/tree/master/efk))
+
+This guide assumes you have set up the nfs provisioner client referenced
+previously. If that is not the case, please update the storage config in
+a values.yaml file and pass it during the installation (see
+[*https://github.com/kumulustech/kubespray-install/blob/master/efk-default-values.yaml*](https://github.com/kumulustech/kubespray-install/blob/master/efk-default-values.yaml)
+for default values)
+
+Install elastic search operator helm chart:
+```
+helm repo add es-operator https://raw.githubusercontent.com/upmc-enterprises/elasticsearch-operator/master/charts/
+helm install --set rbac.enabled=true --name es-operator --namespace logging es-operator/elasticsearch-operator
+```
+Get the custom helm umbrella chart for the EFK configuration and install
+with the following:
+```
+wget https://raw.githubusercontent.com/kumulustech/kubespray-install/master/efk-0.0.1.tgz
+helm install --name efk --namespace logging efk-0.0.1.tgz
+```
+After a few minutes, querying the pods in the logging namespace should
+result in something similar to the following:
+```
+kubectl get pods -n logging
+NAME READY STATUS RESTARTS AGE
+efk-fluent-bit-ldp55 1/1 Running 0 9m1s
+efk-fluent-bit-s9n4q 1/1 Running 0 9m1s
+efk-kibana-5f9c56d576-h6qmc 1/1 Running 0 9m1s
+elasticsearch-operator-6b4f5c57dd-g9vlr 1/1 Running 0 81m
+es-client-efk-cluster-6c96b94d7d-54qcv 1/1 Running 0 8m16s
+es-data-efk-cluster-nfs-client-0 1/1 Running 0 8m16s
+es-master-efk-cluster-nfs-client-0 1/1 Running 0 8m16s
+```
+
+Once the elastic pods are running, copy admin.conf from
+kubespray/inventory/{project}/artifacts/ to your .kube/config on local
+host (if not already there) then port forward the kibana pod:
+
+`kubectl port-forward {efk-kibana pod name} 5601 -n logging`
+
+Open your web browser at http://localhost:5601 and you should see the
+Kibana dashboard. Then, go to the ‘Discover’ menu item, configure the
+index to ‘kubernetes\_cluster\*’, click next step, choose the value
+‘@timestamp’ and Kibana is ready. You should see all the logs from all
+namespaces in your Kubernetes cluster.
