@@ -1,0 +1,15 @@
+dependencies:
+- name: elasticsearch
+  repository: https://raw.githubusercontent.com/upmc-enterprises/elasticsearch-operator/master/charts/
+  version: 0.1.5
+- name: fluent-bit
+  repository: https://kubernetes-charts.storage.googleapis.com/
+  version: 1.9.0
+- name: elasticsearch-curator
+  repository: https://kubernetes-charts.storage.googleapis.com/
+  version: 1.2.1
+- name: kibana
+  repository: https://kubernetes-charts.storage.googleapis.com/
+  version: 2.0.0
+digest: sha256:d4705ab49c1c0817c50acb262f78d3907d6e076f0077ae8eaa745cb602ffac1a
+generated: 2019-03-28T17:48:58.433865827Z

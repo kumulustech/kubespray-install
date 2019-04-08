@@ -1,23 +1,81 @@
+** Prerequisites **
+
+Ansible 2.7
+Python netaddr module
+
+To install ansible and netaddr it is recommended to use a virtual environment:
+
+```
+virtualenv ~/ansible
+. ~/ansible/bin/activate
+pip install ansible
+pip install netaddr
+```
+
+git needs to be installed and a copy of the kubespray-install repository
+should be cloned:
+
+```
+git clone https://github.com/kumulustech/kubespray-install
+```
+
+In addition a kubectl binary and helm binary are required for further configurations:
+
+Follow the instructions here to get kubectl for your build machine:
+https://kubernetes.io/docs/tasks/tools/install-kubectl/
+
+or on a Linux host:
+
+```
+curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+chmod +x ./kubectl
+sudo mv ./kubectl /usr/local/bin/kubectl
+```
+
+Also, we'll need the helm tools.  Again, instructions here here:
+https://helm.sh/docs/using_helm/#installing-helm
+
+or On a Linux machine:
+
+```
+curl -sLO https://storage.googleapis.com/kubernetes-helm/helm-v2.13.1-linux-amd64.tar.gz
+tar xfz helm-v2.13.1-linux-amd64.tar.gz
+sudo mv linux-amd64/helm /usr/local/bin/helm
+```
+
+** Create an inventory **
+
+The inventory for kubespray is both an inventory and a set of group variables.
+If you leverage the one included here, you'll need to update the ip addresses of the
+three (3) master nodes, and the ip addresses of the worker nodes (assumes a minimum of 1 node)
+
+edit the default/hosts.ini for the default inventory and update:
+ the external and internal IP addresses for the master, haproxy, nfs (if separate) and worker nodes
+
+You should not need to modify the rest of the document.
+
+Note that this model assumes one node as haproxy and nfs service if this is not the case, modify
+the haproxy and nfs host targets as appropraite
+
+It is possible to use the haproxy node as the ansible install node as well, though
+it is necessary to configure passwordless ssh access to the other nodes (as is standard
+for ansible deployemnts).  There is an ssh.yml ansible script that can be used to copy a known
+id_rsa and id_rsa.pub file to all the nodes in the inventory. This will need to be done from
+a machine with ssh access (and ansible) to all of the nodes.  I recommend deploying from a
+management node (like the cloud-shell from GCP) that is consistent and has the appropriate
+ssh keys installed.
+
+```
+cd kubespay-install
+ansible-playbook -i default/hosts.ini ssh.yml
+```
+
 **(Optional) Set up HAProxy SLB for testing**
 ---------------------------------------------
 
-Download the haproxy playbook\
-`wget https://raw.githubusercontent.com/kumulustech/kubespray-install/master/haproxy.tar.gz`
-
-Unzip it:
-
-`tar -xzvf haproxy.tar.gz`
-
-Update the inventory file with your haproxy test server IP (note: this
-setup is for testing and does not configure VIP or HA on haproxy).
-
-Then update the haproxy.cfg file to reflect the IP of your SLB hardware
-in the ‘frontend kubernetes’ configuration after ‘bind’ as well as
-updating the ‘server’ entries of kubernetes-master-nodes to reflect your
-pods hostnames and IPs
-
-Once the configs have been modified to reflect your environment, run the
-playbook to bring up the haproxy server:
+You should not need to modify any of the configurations to support
+the deployment against the master node.  Additional configuration is
+not currently implemented
 
 `ansible-playbook -i inventory haproxy.yml`
 
@@ -26,90 +84,33 @@ playbook to bring up the haproxy server:
 
 (source:
 [*https://github.com/kubernetes-sigs/kubespray*](https://github.com/kubernetes-sigs/kubespray))
-Prequisites: Virtual or Physical machines with direct "open" L3 access.
-I.e. there should be no firewall access restrictions between nodes, and
-at a minimum ports 80, 443, and preferably ports from 30-65K are
-available at a minimum. A "launch" node, or a laptop with: git python
-(3) + ansible (2.7) kubectl (1.12)
 
 Git clone the kubespray repository:
 
 `git clone https://github.com/kubespray/kubespray`
 
-Create an inventory directory for the ansible play:
-
-`cp -r kubespray/inventory/sample project/`
-
-update the project/hosts.ini file with the the target machine
-information.
-
-`hostname ansible\_host={publicL3} ansible\_user={osUser}`
-
-publicL3 is the address that ansible will access the host with osUser is
-the default user for the OS, often ubuntu for Ubuntu nodes, centos for
-Centos nodes, cloud-user for Rhel
-
-Copy the hostname into the appropriate group based on role, and the
-normal model is to separate master, etcd and nodes. But it is also
-common to run etcd on the master node(s), and also to run all resources
-on the all nodes depending on scale.
+Currently it is assumed that we can log in directly as root via ssh. If this
+is not the case, update the hosts.ini ansible_user parameter. The default user
+for the OS, often ubuntu for Ubuntu nodes, centos for Centos nodes, cloud-user for Rhel,
+ec2-user for amazon
 
 Note: the total number of etcd nodes must be an odd number or the
 kubespray playbook will fail
 
-Unless one has already checked remote ssh login access to the nodes,
-you'll often want to bypass the ssh-host key validation:
+If we have more than one master, and are using haproxy to frontend the cluster, we will need to update the 
 
-`export ANSIBLE\_HOST\_KEY\_CHECKING=False`
-
-Or, add the following to the project/group\_vars/all/all.yml
-
-`ansible\_ssh\_extra\_args: '-o StrictHostKeyChecking=no'`
-
-In order to allow the local host to communicate with the deployed
-kubernetes environment we'll also want to add:
-
-`kubeconfig\_localhost: true`
-
-to the all group\_vars. You will need to configure your external load
-balancer in this file as well if applicable. source:
 [*https://github.com/kubernetes-sigs/kubespray/blob/master/docs/ha-mode.md*](https://github.com/kubernetes-sigs/kubespray/blob/master/docs/ha-mode.md)
 
-```
-## External LB example config
-## apiserver_loadbalancer_domain_name: "elb.some.domain"
-#loadbalancer_apiserver:
-# address: 1.2.3.4
-# port: 1234
-
-## Internal loadbalancers for apiservers (this defaults to false when loadbalancer_apiserver is set)
-#loadbalancer_apiserver_localhost: true
-```
 
 If kubespray is generating your api-server certificates (via kubeadm),
 you will also need to add the address of your SLB/ELB to the
-supplementary\_addresses\_in\_ssl\_keys array in
-project/group\_vars/k8s-cluster/k8s-cluster.yml
-
-If no external load balancer is specified (as is the default), a
-localhost load balancer will be set up instead.
+supplementary_addresses_in_ssl_keys array in
+default/group_vars/all/all.yml
 
 **Step 2. Enable Helm**
 -----------------------
 
-Source:
-[*https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/helm*](https://github.com/kubernetes-sigs/kubespray/tree/master/roles/kubernetes-apps/helm)
-
-In project/group\_vars/k8s-cluster/addons.yml set helm\_enabled to true
-and add the line helm\_version like such:
-
-```
-# Helm deployment
-helm_enabled: true
-helm_version: v2.13.0 # note, without this line, helm defaults to v2.12.2
-```
-
-Alternatively, you can install Helm natively. First get the helm client,
+If you've not already done so, install Helm natively. First get the helm client,
 the simplest method is to run the following curl/bash:
 
 `curl https://raw.githubusercontent.com/helm/helm/master/scripts/get |
@@ -134,33 +135,14 @@ Kubespray addon repo (its readme.md is an outdated copy of ingress-nginx install
 
 Install within kubespray playbooks:
 
-In project/group\_vars/k8s-cluster/addons.yml set
-ingress\_nginx\_enabled to true and uncomment the lines following it
-like such. Add the line ‘ingress\_nginx\_default\_service\_nodeport:
-true’ to the block as well, this is a custom setting.
-
+In project/group_vars/k8s-cluster/addons.yml set
+ingress_nginx_enabled to true and uncomment the lines following it:
 ```
 # Nginx ingress controller deployment
 ingress_nginx_enabled: true
 ingress_nginx_host_network: false
 ingress_nginx_nodeselector:
-node-role.kubernetes.io/node: ""
-# ingress_nginx_tolerations:
-# - key: "node-role.kubernetes.io/master"
-# operator: "Equal"
-# value: ""
-# effect: "NoSchedule"
-# ingress_nginx_namespace: "ingress-nginx"
-# ingress_nginx_insecure_port: 80
-# ingress_nginx_secure_port: 443
-# ingress_nginx_configmap:
-# map-hash-bucket-size: "128"
-# ssl-protocols: "SSLv2"
-# ingress_nginx_configmap_tcp_services:
-# 9000: "default/example-go:8080"
-# ingress_nginx_configmap_udp_services:
-# 53: "kube-system/kube-dns:53"
-ingress_nginx_default_service_nodeport: true
+  node-role.kubernetes.io/node: ""
 ```
 
 To enable the nodePort custom setting, we must alter the ingress service
@@ -178,9 +160,7 @@ metadata:
     app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/part-of: ingress-nginx
 spec:
-{% if ingress_nginx_default_service_nodeport %}
   type: NodePort
-{% endif %}
   ports:
     - port: 80
       targetPort: 80
@@ -191,25 +171,18 @@ spec:
 
 Note:
 
--   Jinja if statement added for the ingress\_nginx\_default\_service\_nodeport setting
-
 -   targetPort changed from 8080 to 80
 
 -   Selector app.kubernetes.io/name changed from ‘default-backend’ to ‘ingress-nginx’
 
-Also add the following line to
-kubespray/roles/kubernetes-apps/ingress-controller/ingress-nginx/defaults/main.yml:
-
-`ingress_nginx_default_service_nodeport: false`
-
 After these updates, you can rerun the ansible cluster.yml playbook to
-update you cluster (TODO: test if scale.yml works too)
+update you cluster
 
 **Step 4. Configure OpenID connect on cluster for dex/ldap**
 ------------------------------------------------------------
 
-In project/group\_vars/k8s-cluster/k8s-cluster.yml, uncomment the line
-\#kube\_oidc\_auth: false and set it to true then uncomment configure
+In project/group_vars/k8s-cluster/k8s-cluster.yml, uncomment the line
+\#kube_oidc_auth: false and set it to true then uncomment configure
 the following
 
 Note:
@@ -240,7 +213,7 @@ kube_oidc_groups_claim: groups
 
 Now we should be able to deploy our Kubernetes environment:
 
-`ansible-playbook -i dev/hosts.ini kubespray/cluster.yml`
+`ansible-playbook -i default/hosts.ini kubespray/cluster.yml`
 
 Once the deployment completes, install and configure kubectl with:
 (source:
@@ -255,8 +228,14 @@ mv kubectl /usr/local/bin/kubectl
 
 chmod +x /usr/local/bin/kubectl
 
-export KUBECONFIG=\${PWD}/dev/artifacts/admin.conf
+export KUBECONFIG=\${PWD}/default/artifacts/admin.conf
 ```
+
+NOTE:  You must change the ip address in the default/artifacts/admin.conf
+to point to your load balancer address if using the HAproxy configuration,
+or to the external address of your master node if only using a single
+master, or the service will not work.
+
 Run `kubectl get pods -n kube-system` to verify cluster related pods are
 all ready. In some cases, certain pods will be stuck in a status of
 ContainerCreating. Such cases can be rectified by running the playbook
@@ -270,7 +249,7 @@ again.
 (source:
 [*https://github.com/kubernetes-incubator/external-storage/tree/master/nfs-client*](https://github.com/kubernetes-incubator/external-storage/tree/master/nfs-client))
 
-`helm install stable/nfs-client-provisioner --name nfs --set nfs.server={SERVER\_IP} --set nfs.path={NFS\_EXPORT\_PATH}`
+`helm install stable/nfs-client-provisioner --name nfs --set nfs.server={SERVER_IP} --set nfs.path=/home/public`
 
 On any node where a PVC/PV may be created, you will need to ensure that
 the nfs-common (Debian/Ubuntu) or nfs-utils (Rhel/Centos) packages are

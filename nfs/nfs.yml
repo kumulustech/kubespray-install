@@ -1,0 +1,21 @@
+- hosts: nfs
+  vars:
+    nfs_exports: [ "/home/public *(rw,sync,no_root_squash,no_subtree_check)" ]
+  pre_tasks:
+    - name: ensure public directory
+      file:
+        dest: /home/public
+        mode: 0777
+        state: directory
+  roles:
+    - { role: nfs }
+
+- hosts: k8s-cluster
+  tasks:
+  - apt:
+      name: nfs-common
+    when: ansible_os_family == 'Debian'
+
+  - yum:
+      name: nfs-utils
+    when: ansible_os_family == 'RedHat'

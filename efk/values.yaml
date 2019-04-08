@@ -1,0 +1,50 @@
+# Default values for efk. Source: https://github.com/komljen/helm-charts/tree/master/efk/values.yaml
+
+# https://github.com/helm/charts/blob/master/stable/kibana/values.yaml
+kibana:
+  image:
+    tag: "6.1.3"
+  env:
+    # All Kibana configuration options are adjustable via env vars.
+    # To adjust a config option to an env var uppercase + replace `.` with `_`
+    # Ref: https://www.elastic.co/guide/en/kibana/current/settings.html
+    #
+    ELASTICSEARCH_URL: http://elasticsearch-efk-cluster:9200
+    SERVER_PORT: 5601
+    LOGGING_VERBOSE: "true"
+    SERVER_DEFAULTROUTE: "/app/kibana"
+
+# https://github.com/upmc-enterprises/elasticsearch-operator/blob/master/charts/elasticsearch/values.yaml
+elasticsearch:
+  use-ssl: false
+  network-host: 0.0.0.0
+  data-volume-size: 10Gi
+  client-java-options: "-Xms1024m -Xmx1024m"
+  master-java-options: "-Xms2048m -Xmx2048m"
+  data-java-options: "-Xms2048m -Xmx2048m"
+  storage:
+    class: nfs-client
+  resources:
+    requests:
+      memory: 1024Mi
+      cpu: 200m
+    limits:
+      memory: 2048Mi
+      cpu: '1'
+
+# https://github.com/kubernetes/charts/blob/master/stable/fluent-bit/values.yaml
+fluent-bit:
+  backend:
+    type: es
+    es:
+      host: elasticsearch-efk-cluster
+      port: 9200
+      index: kubernetes_cluster
+      logstash_prefix: kubernetes_cluster
+
+# https://github.com/helm/charts/blob/master/stable/elasticsearch-curator/values.yaml
+elasticsearch-curator:
+  config:
+    elasticsearch:
+      hosts:
+        - elasticsearch-efk-cluster

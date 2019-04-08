@@ -1,0 +1,12 @@
+appVersion: 6.4.2
+description: EFK stack
+home: https://github.com/kumulustech/kubespray-install
+keywords:
+- elasticsearch
+- kibana
+- fluent-bit
+maintainers:
+- email: fred@kumul.us
+  name: fsharp
+name: efk
+version: 0.0.1

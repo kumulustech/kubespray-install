@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: False
+
+  tasks:
+  - name: install python 2
+    raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)
+
+- hosts: all
+  tasks:
+  - name: copy ssh keys to system
+    copy: src={{item}} dest=/root/.ssh/{{item}} mode=600
+    with_items:
+     - id_rsa
+     - id_rsa.pub
+  - name: add public key to root user
+    authorized_key: user=root key="{{ lookup('file', 'id_rsa.pub') }}"
