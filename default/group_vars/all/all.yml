@@ -1,7 +1,9 @@
 ---
 ansible_ssh_extra_args: '-o StrictHostKeyChecking=no'
 kubeconfig_localhost: true
+#supplementary_addresses_in_ssl_keys: [104.196.161.241,10.142.15.203,10.142.15.204,10.142.15.205,10.142.15.206]
 supplementary_addresses_in_ssl_keys: [{external_ip},{internal_ip}]
+cloud_provider: gce
 ## Directory where etcd data stored
 etcd_data_dir: /var/lib/etcd
 
@@ -15,11 +17,10 @@ bin_dir: /usr/local/bin
 ## but don't know about that address themselves.
 # access_ip: 1.1.1.1
 
-
 ## External LB example config
-## apiserver_loadbalancer_domain_name: "elb.some.domain"
-# loadbalancer_apiserver:
-#   address: 1.2.3.4
+#apiserver_loadbalancer_domain_name: "api.kumulus.co"
+loadbalancer_apiserver:
+  address: {external_ip}
 #   port: 1234
 
 ## Internal loadbalancers for apiservers
@@ -50,7 +51,6 @@ nginx_kube_apiserver_healthcheck_port: 8081
 ## like you would do when using openstack-client before starting the playbook.
 ## Note: The 'external' cloud provider is not supported.
 ## TODO(riverzhang): https://kubernetes.io/docs/tasks/administer-cluster/running-cloud-controller/#running-cloud-controller-manager
-# cloud_provider:
 
 ## Set these proxy values in order to update package manager and docker daemon to use proxies
 # http_proxy: ""

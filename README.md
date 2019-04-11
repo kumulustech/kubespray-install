@@ -120,7 +120,7 @@ Create a service account and then bind the cluster-admin role to the
 service account:
 ```
 kubectl create serviceaccount tiller --namespace kube-system
-Kubectl create clusterrolebinding tiller-deploy --clusterrole cluster-admin --serviceaccount kube-system:tiller
+kubectl create clusterrolebinding tiller-deploy --clusterrole cluster-admin --serviceaccount kube-system:tiller
 ```
 And finally install tiller:
 
